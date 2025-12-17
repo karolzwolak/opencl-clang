@@ -314,6 +314,7 @@ Compile(const char *pszProgramSource, const char **pInputHeaders,
       std::string Err;
       SPIRV::TranslatorOpts SPIRVOpts;
       SPIRVOpts.enableAllExtensions();
+      SPIRVOpts.setAllowedToUseExtension(SPIRV::ExtensionID::SPV_KHR_untyped_pointers, false);
       if (!optionsParser.hasOptDisable()) {
         SPIRVOpts.setMemToRegEnabled(true);
       }
