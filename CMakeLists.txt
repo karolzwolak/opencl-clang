@@ -155,9 +155,11 @@ if(NOT USE_PREBUILT_LLVM)
     set(CLANG_BASE_REVISION main)
     set(SPIRV_BASE_REVISION main)
     set(TARGET_BRANCH main)
+    set(LLVM_PATCHES_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/patches/llvm
+                          ${CMAKE_CURRENT_SOURCE_DIR}/patches/clang)
 
     apply_patches(${CLANG_SOURCE_DIR}
-                  ${CMAKE_CURRENT_SOURCE_DIR}/patches/clang
+                  "${LLVM_PATCHES_DIRS}"
                   ${CLANG_BASE_REVISION}
                   ${TARGET_BRANCH})
     apply_patches(${SPIRV_SOURCE_DIR}
