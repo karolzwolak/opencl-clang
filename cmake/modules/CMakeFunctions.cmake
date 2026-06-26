@@ -92,79 +92,117 @@ function(apply_patches repo_dir patches_dir base_revision target_branch)
         message(STATUS "[OPENCL-CLANG] No patches in ${patches_dir}")
         return()
     endif()
+    list(SORT patches)
+
+    # Re-run CMake configure whenever a patch is added, removed or edited.
+    set_property(DIRECTORY ${CMAKE_SOURCE_DIR} APPEND
+                 PROPERTY CMAKE_CONFIGURE_DEPENDS ${patches})
+
+    # Fingerprint the patch set. The hash is stored on the generated branch; if
+    # it no longer matches the current patches the branch is stale and gets
+    # rebuilt - no need to delete it by hand after editing a patch.
+    set(fingerprint_input "")
+    foreach(patch ${patches})
+        file(MD5 ${patch} patch_md5)
+        string(APPEND fingerprint_input "${patch_md5}")
+    endforeach()
+    string(MD5 patches_fingerprint "${fingerprint_input}")
 
     message(STATUS "[OPENCL-CLANG] Patching repository ${repo_dir}")
     # Check if the target branch already exists
     execute_process(
         COMMAND ${GIT_EXECUTABLE} rev-parse --verify --no-revs -q ${target_branch}
         WORKING_DIRECTORY ${repo_dir}
-        RESULT_VARIABLE patches_needed
+        RESULT_VARIABLE branch_missing
         OUTPUT_QUIET
     )
-    if(patches_needed EQUAL 128)
+    if(branch_missing EQUAL 128)
       message(STATUS "[OPENCL-CLANG][Warning] ${repo_dir} is not a git repository, therefore, local patches are not applied")
       return()
     endif()
-    if(patches_needed EQUAL 1) # The target branch doesn't exist
-        list(SORT patches)
-        is_valid_revision(${repo_dir} ${base_revision} exists_base_rev)
-
-        if(NOT ${exists_base_rev})
-            execute_process( # take SHA1 from HEAD
-                COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
-                WORKING_DIRECTORY ${repo_dir}
-                OUTPUT_VARIABLE repo_head
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                )
-            message(STATUS "[OPENCL-CLANG] ref ${base_revision} not exists in repository, using current HEAD:${repo_head}")
-            set(base_revision ${repo_head})
-        endif()
-        execute_process( # Create the target branch
-            COMMAND ${GIT_EXECUTABLE} checkout -b ${target_branch} ${base_revision}
+    if(branch_missing EQUAL 0) # The target branch exists - is it still in sync?
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} config --local --get branch.${target_branch}.openclClangPatchesHash
             WORKING_DIRECTORY ${repo_dir}
-            RESULT_VARIABLE ret_check_out
-            ERROR_STRIP_TRAILING_WHITESPACE
-            ERROR_VARIABLE checkout_log
-            OUTPUT_QUIET
-            )
-        message(STATUS "[OPENCL-CLANG] ${checkout_log} which starts from ref : ${base_revision}")
-        foreach(patch ${patches})
-            is_backport_patch_present(${patch} ${repo_dir} patch_in_branch)
-            if(${patch_in_branch})
-                message(STATUS "[OPENCL-CLANG] Patch ${patch} is already in local branch - ignore patching")
-            else()
-                execute_process( # Apply the patch
-                    COMMAND ${GIT_EXECUTABLE} am --3way --keep-non-patch --ignore-whitespace ${patch}
-                    WORKING_DIRECTORY ${repo_dir}
-                    RESULT_VARIABLE ret_apply_patch
-                    OUTPUT_VARIABLE patching_log
-                    ERROR_VARIABLE  patching_err
-                )
-                message(STATUS "[OPENCL-CLANG] Applying ${patch}\n${patching_log}")
-                if(ret_apply_patch)
-                    execute_process( # Abort the half-applied am so the repo is left in a sane state
-                        COMMAND ${GIT_EXECUTABLE} am --abort
-                        WORKING_DIRECTORY ${repo_dir}
-                        OUTPUT_QUIET ERROR_QUIET
-                    )
-                    message(FATAL_ERROR
-                        "[OPENCL-CLANG] Failed to apply patch ${patch}\n"
-                        "git am exit code: ${ret_apply_patch}\n"
-                        "stdout:\n${patching_log}\n"
-                        "stderr:\n${patching_err}")
-                endif()
-            endif()
-        endforeach(patch)
-    elseif(patches_needed EQUAL 0) # The target branch already exists
-        execute_process( # Check it out
-            COMMAND ${GIT_EXECUTABLE} checkout ${target_branch}
-            WORKING_DIRECTORY ${repo_dir}
-            OUTPUT_QUIET
+            OUTPUT_VARIABLE stored_fingerprint
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
         )
+        if(stored_fingerprint STREQUAL patches_fingerprint)
+            execute_process( # Up to date, just check it out
+                COMMAND ${GIT_EXECUTABLE} checkout ${target_branch}
+                WORKING_DIRECTORY ${repo_dir}
+                OUTPUT_QUIET
+            )
+            message(STATUS "[OPENCL-CLANG] ${target_branch} is up to date with patches")
+            return()
+        endif()
+        message(STATUS "[OPENCL-CLANG] Patch set changed, rebuilding ${target_branch}")
+        execute_process( # Detach so the stale generated branch can be dropped
+            COMMAND ${GIT_EXECUTABLE} checkout --detach ${target_branch}
+            WORKING_DIRECTORY ${repo_dir} OUTPUT_QUIET ERROR_QUIET)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} branch -D ${target_branch}
+            WORKING_DIRECTORY ${repo_dir} OUTPUT_QUIET ERROR_QUIET)
     endif()
-    if (ret_check_out OR ret_apply_patch)
-      message(FATAL_ERROR "[OPENCL-CLANG] Failed to apply patch!")
+
+    is_valid_revision(${repo_dir} ${base_revision} exists_base_rev)
+    if(NOT ${exists_base_rev})
+        execute_process( # take SHA1 from HEAD
+            COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+            WORKING_DIRECTORY ${repo_dir}
+            OUTPUT_VARIABLE repo_head
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            )
+        message(STATUS "[OPENCL-CLANG] ref ${base_revision} not exists in repository, using current HEAD:${repo_head}")
+        set(base_revision ${repo_head})
     endif()
+    execute_process( # Create the target branch
+        COMMAND ${GIT_EXECUTABLE} checkout -b ${target_branch} ${base_revision}
+        WORKING_DIRECTORY ${repo_dir}
+        RESULT_VARIABLE ret_check_out
+        ERROR_STRIP_TRAILING_WHITESPACE
+        ERROR_VARIABLE checkout_log
+        OUTPUT_QUIET
+        )
+    message(STATUS "[OPENCL-CLANG] ${checkout_log} which starts from ref : ${base_revision}")
+    if(ret_check_out)
+        message(FATAL_ERROR "[OPENCL-CLANG] Failed to create branch ${target_branch}")
+    endif()
+    foreach(patch ${patches})
+        is_backport_patch_present(${patch} ${repo_dir} patch_in_branch)
+        if(${patch_in_branch})
+            message(STATUS "[OPENCL-CLANG] Patch ${patch} is already in local branch - ignore patching")
+        else()
+            execute_process( # Apply the patch
+                COMMAND ${GIT_EXECUTABLE} am --3way --keep-non-patch --ignore-whitespace ${patch}
+                WORKING_DIRECTORY ${repo_dir}
+                RESULT_VARIABLE ret_apply_patch
+                OUTPUT_VARIABLE patching_log
+                ERROR_VARIABLE  patching_err
+            )
+            message(STATUS "[OPENCL-CLANG] Applying ${patch}\n${patching_log}")
+            if(ret_apply_patch)
+                execute_process( # Abort the half-applied am so the repo is left in a sane state
+                    COMMAND ${GIT_EXECUTABLE} am --abort
+                    WORKING_DIRECTORY ${repo_dir}
+                    OUTPUT_QUIET ERROR_QUIET
+                )
+                message(FATAL_ERROR
+                    "[OPENCL-CLANG] Failed to apply patch ${patch}\n"
+                    "git am exit code: ${ret_apply_patch}\n"
+                    "stdout:\n${patching_log}\n"
+                    "stderr:\n${patching_err}")
+            endif()
+        endif()
+    endforeach(patch)
+
+    # Record the fingerprint so the next configure can detect patch changes.
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} config --local branch.${target_branch}.openclClangPatchesHash ${patches_fingerprint}
+        WORKING_DIRECTORY ${repo_dir}
+    )
+    message(STATUS "[OPENCL-CLANG] Applied patch successfully!")
 endfunction()
 
 # Usage
