@@ -3,6 +3,7 @@
 # ===---
 
 name: Build opencl-clang
+description: 'Build opencl-clang in-tree with LLVM and SPIRV-LLVM-Translator'
 inputs:
   ref_llvm:
     description: 'LLVM ref to build with'

@@ -1,5 +1,7 @@
 # ===---
 # Running on push & pull_request.
+#   Builds opencl-clang out-of-tree against an apt-installed LLVM.
+#   Per-branch versions come from .github/llvm-version.env.
 # ===---
 
 name: Build
@@ -8,17 +10,15 @@ run-name: '${{ github.event_name }}: ${{ github.base_ref }} ${{ github.ref_name 
 permissions:
   contents: read
 
-env:
-  LLVM_VERSION: 23
-  LLVM_VERSION_MINOR: 0
-
 on:
   push:
     branches:
       - main
+      - ocl-open-*
   pull_request:
     branches:
       - main
+      - ocl-open-*
     types:
       - opened
       - reopened
@@ -29,49 +29,27 @@ jobs:
 
   verify_default_branch:
     name: Out-of-tree Linux
-    # ref_name for 'on: push'
-    # base_ref for 'on: pull_request'
     runs-on: ubuntu-24.04
     steps:
 
-      - name: Install llvm and its dependencies
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/llvm.gpg > /dev/null
-          echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update
-          sudo apt-get -yq --no-install-suggests --no-install-recommends install \
-            clang-${{ env.LLVM_VERSION }} \
-            clang-tools-${{ env.LLVM_VERSION }} \
-            llvm-${{ env.LLVM_VERSION }}-dev \
-            libllvmlibc-${{ env.LLVM_VERSION }}-dev \
-            libclang-${{ env.LLVM_VERSION }}-dev \
-            libclang-cpp${{ env.LLVM_VERSION }}-dev \
-            libpolly-${{ env.LLVM_VERSION }}-dev \
-            libzstd-dev \
-            libedit-dev \
-            mlir-${{ env.LLVM_VERSION }}-tools
-          # Linux systems in GitHub Actions already have older versions of clang
-          # pre-installed. Make sure to override these with the relevant version.
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${{ env.LLVM_VERSION }} 1000
-
-      - name: Checkout SPIRV-LLVM-Translator sources
+      - name: Checkout opencl-clang sources for action files and config
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Load LLVM config
+        shell: bash
+        run: grep -E '^[A-Z_]+=' .github/llvm-version.env >> "$GITHUB_ENV"
+
+      - name: Install LLVM
+        uses: ./.github/actions/install-llvm
         with:
-          repository: KhronosGroup/SPIRV-LLVM-Translator
-          path: SPIRV-LLVM-Translator
-          ref: main
+          llvm_major: ${{ env.LLVM_MAJOR }}
+          apt_suffix: ${{ env.APT_SUFFIX }}
 
       - name: Build SPIRV-LLVM-Translator
-        run: |
-          builddir=${{ github.workspace }}/SPIRV-LLVM-Translator/build
-          cmake -B "$builddir" \
-            ${{ github.workspace }}/SPIRV-LLVM-Translator \
-            -DLLVM_INCLUDE_TESTS=OFF \
-            -DCMAKE_INSTALL_PREFIX="$builddir"/install \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build "$builddir" -j $(nproc)
-          cmake --install "$builddir"
-          echo "spirv_translator_install_dir=${builddir}/install" >> $GITHUB_ENV
+        id: translator
+        uses: ./.github/actions/build-translator
+        with:
+          ref: ${{ env.TRANSLATOR_REF }}
 
       - name: Checkout opencl-clang sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -83,8 +61,8 @@ jobs:
         run: |
           mkdir build && cd build
           cmake ${{ github.workspace }}/opencl-clang \
-            -DPREFERRED_LLVM_VERSION="${{ env.LLVM_VERSION }}.${{ env.LLVM_VERSION_MINOR }}" \
+            -DPREFERRED_LLVM_VERSION="${{ env.LLVM_MAJOR }}.${{ env.LLVM_MINOR }}" \
             -DLLVMSPIRV_INCLUDED_IN_LLVM=OFF \
-            -DSPIRV_TRANSLATOR_DIR=${{ env.spirv_translator_install_dir }} \
+            -DSPIRV_TRANSLATOR_DIR=${{ steps.translator.outputs.install_dir }} \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build . -j $(nproc)

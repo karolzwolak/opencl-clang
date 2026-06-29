@@ -1,0 +1,37 @@
+# ===---
+# Install LLVM/clang from apt.llvm.org for out-of-tree builds.
+# ===---
+
+name: Install LLVM
+description: 'Install LLVM/clang from apt.llvm.org for out-of-tree builds'
+inputs:
+  llvm_major:
+    description: 'LLVM major version (apt package suffix, e.g. 23)'
+    required: true
+  apt_suffix:
+    description: "apt.llvm.org repo suffix: '' for dev nightly, '-NN' for a release"
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/llvm.gpg > /dev/null
+        echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble${{ inputs.apt_suffix }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+        sudo apt-get update
+        sudo apt-get -yq --no-install-suggests --no-install-recommends install \
+          clang-${{ inputs.llvm_major }} \
+          clang-tools-${{ inputs.llvm_major }} \
+          llvm-${{ inputs.llvm_major }}-dev \
+          libllvmlibc-${{ inputs.llvm_major }}-dev \
+          libclang-${{ inputs.llvm_major }}-dev \
+          libclang-cpp${{ inputs.llvm_major }}-dev \
+          libpolly-${{ inputs.llvm_major }}-dev \
+          libzstd-dev \
+          libedit-dev \
+          mlir-${{ inputs.llvm_major }}-tools
+        # Linux systems in GitHub Actions already have older versions of clang
+        # pre-installed. Make sure to override these with the relevant version.
+        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${{ inputs.llvm_major }} 1000

@@ -1,7 +1,7 @@
 # ===---
 # Running on push & pull_request.
 #   Builds opencl-clang in-tree and runs ninja check-opencl-clang.
-#   Parses the destination branch to choose correct dependency revisions.
+#   Per-branch dependency revisions come from .github/llvm-version.env.
 # ===---
 
 name: In-tree Build and Test
@@ -29,18 +29,20 @@ jobs:
 
   verify_default_branch:
     name: Linux
-    # ref_name for 'on: push'
-    # base_ref for 'on: pull_request'
     runs-on: ubuntu-24.04
     steps:
 
-      - name: Checkout opencl-clang sources for action files
+      - name: Checkout opencl-clang sources for action files and config
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Load LLVM config
+        shell: bash
+        run: grep -E '^[A-Z_]+=' .github/llvm-version.env >> "$GITHUB_ENV"
 
       - name: Run build-opencl-clang action
         uses: ./.github/actions/build-opencl-clang
         with:
-          ref_llvm: main
-          ref_translator: main
+          ref_llvm: ${{ env.LLVM_REF }}
+          ref_translator: ${{ env.TRANSLATOR_REF }}
           ref_opencl-clang: ${{ github.ref }}
           run_tests: 'true'
