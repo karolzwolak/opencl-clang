@@ -1,0 +1,51 @@
+# ===---
+# Workflow run for regular SPIRV-LLVM-Translator and LLVM compatibility check
+# ===---
+
+name: Scheduled verification
+run-name: Scheduled verification
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Run Sunday & Wednesday at 00:00
+    - cron: 0 0 * * 0,3
+
+jobs:
+
+  verify-default-branches:
+    name: Verify `main` branch
+    runs-on: ubuntu-24.04
+    steps:
+
+      - name: Checkout opencl-clang sources for action files availabilty
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run build-opencl-clang action
+        uses: ./.github/actions/build-opencl-clang
+        with:
+          ref_llvm: main
+          ref_translator: main
+          ref_opencl-clang: main
+          run_tests: 'true'
+
+  verify-release-branches:
+    name: Verify `ocl-open-${{ matrix.llvm_version }}` release branch
+    strategy:
+      matrix:
+        llvm_version: [ 14, 15, 16, 17, 18, 19, 20, 21, 22 ]
+    runs-on: ubuntu-24.04
+    steps:
+
+      - name: Checkout opencl-clang sources for action files availabilty
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run build-opencl-clang action
+        uses: ./.github/actions/build-opencl-clang
+        with:
+          ref_llvm: release/${{ matrix.llvm_version }}.x
+          ref_translator: llvm_release_${{ matrix.llvm_version }}0
+          ref_opencl-clang: ocl-open-${{ matrix.llvm_version }}0
+          run_tests: ${{ matrix.llvm_version >= 23 }}

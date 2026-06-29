@@ -1,0 +1,38 @@
+# ===---
+# Checkout, build and install SPIRV-LLVM-Translator out-of-tree.
+# ===---
+
+name: Build SPIRV-LLVM-Translator
+description: 'Checkout, build and install SPIRV-LLVM-Translator out-of-tree'
+inputs:
+  ref:
+    description: 'SPIRV-LLVM-Translator ref to build'
+    required: true
+outputs:
+  install_dir:
+    description: 'Install prefix of the built translator'
+    value: ${{ steps.build.outputs.install_dir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout SPIRV-LLVM-Translator sources
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        repository: KhronosGroup/SPIRV-LLVM-Translator
+        path: SPIRV-LLVM-Translator
+        ref: ${{ inputs.ref }}
+
+    - name: Build SPIRV-LLVM-Translator
+      id: build
+      shell: bash
+      run: |
+        builddir=${{ github.workspace }}/SPIRV-LLVM-Translator/build
+        cmake -B "$builddir" \
+          ${{ github.workspace }}/SPIRV-LLVM-Translator \
+          -DLLVM_INCLUDE_TESTS=OFF \
+          -DCMAKE_INSTALL_PREFIX="$builddir"/install \
+          -DCMAKE_BUILD_TYPE=Release
+        cmake --build "$builddir" -j $(nproc)
+        cmake --install "$builddir"
+        echo "install_dir=${builddir}/install" >> "$GITHUB_OUTPUT"

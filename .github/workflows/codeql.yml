@@ -1,39 +1,40 @@
-# ===---
-# Running on push & pull_request.
-#   Builds opencl-clang out-of-tree against an apt-installed LLVM.
-#   Per-branch versions come from .github/llvm-version.env.
-# ===---
+name: "CodeQL"
 
-name: Build
-run-name: '${{ github.event_name }}: ${{ github.base_ref }} ${{ github.ref_name }}' # github.base_ref null for 'on: push'
+on:
+  push:
+    branches: [ "main", "ocl-open-*" ]
+  pull_request:
+    branches: [ "main", "ocl-open-*" ]
 
 permissions:
   contents: read
 
-on:
-  push:
-    branches:
-      - main
-      - ocl-open-*
-  pull_request:
-    branches:
-      - main
-      - ocl-open-*
-    types:
-      - opened
-      - reopened
-      - synchronize       # commit pushed to the PR
-      - ready_for_review  # moved from draft state
-
 jobs:
+  analyze:
+    name: Analyze
 
-  verify_default_branch:
-    name: Out-of-tree Linux
     runs-on: ubuntu-24.04
+
+    permissions:
+      # required for all workflows
+      security-events: write
+
+      # required to fetch internal or private CodeQL packs
+      packages: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - language: c-cpp
+          build-mode: manual
+
     steps:
 
       - name: Checkout opencl-clang sources for action files and config
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.ref }}
 
       - name: Load LLVM config
         shell: bash
@@ -51,18 +52,23 @@ jobs:
         with:
           ref: ${{ env.TRANSLATOR_REF }}
 
-      - name: Checkout opencl-clang sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
-          path: opencl-clang
-          ref: ${{ github.ref }}
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
 
       - name: Build opencl-clang
         run: |
           mkdir build && cd build
-          cmake ${{ github.workspace }}/opencl-clang \
+          cmake ${{ github.workspace }} \
             -DPREFERRED_LLVM_VERSION="${{ env.LLVM_MAJOR }}.${{ env.LLVM_MINOR }}" \
             -DLLVMSPIRV_INCLUDED_IN_LLVM=OFF \
             -DSPIRV_TRANSLATOR_DIR=${{ steps.translator.outputs.install_dir }} \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build . -j $(nproc)
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          category: "/language:${{matrix.language}}"
